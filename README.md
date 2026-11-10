@@ -13,7 +13,7 @@ one-repo-per-tool runner pattern used by the other Moos Labs tool repos.
 - The "Run commands" step receives these organization secrets as
   environment variables, so normal (LLM) runs can use them without a key
   ever appearing in a command or a log: **GOOGLE_API_KEY**,
-  **SAMBANOVA_API_KEY** and **GH_MODELS_TOKEN**.
+  **SAMBANOVA_API_KEY**, **GH_MODELS_TOKEN** and **COHERE_API_KEY**.
 
 ## Providers
 
@@ -26,11 +26,17 @@ one-repo-per-tool runner pattern used by the other Moos Labs tool repos.
 | `anthropic` | ANTHROPIC_API_KEY | TradingAgents native Anthropic client |
 | `sambanova` | SAMBANOVA_API_KEY | Generic `openai_compatible` client, backend `https://api.sambanova.ai/v1` |
 | `github-models` | GH_MODELS_TOKEN | Generic `openai_compatible` client, backend `https://models.github.ai/inference` |
+| `cohere` | COHERE_API_KEY | Generic `openai_compatible` client, backend `https://api.cohere.ai/compatibility/v1` |
 
-Note: the stored GOOGLE_API_KEY's project is denied the Gemini free tier
-(403 in the first real run), so real runs currently use `sambanova` or
-`github-models`. For those two, the script also writes
-`results/provider_models.json` listing the models the endpoint serves.
+Provider status from the first real runs (2026-11-10): the stored
+GOOGLE_API_KEY's project is denied the Gemini free tier (403). The
+SambaNova key authenticates and its model list answers, but chat
+completions return 402 ("a payment method is required") on that account.
+GitHub Models' endpoint answers plain-text `OK` stubs instead of JSON
+(the service was measured in retirement brownout in late 2026), so it is
+unusable. Real runs therefore use `cohere`. For the OpenAI-compatible
+providers, the script also writes `results/provider_models.json` listing
+the models the endpoint serves.
 
 ## Commands
 
@@ -45,7 +51,7 @@ Real research run:
 
 ```sh
 mkdir -p results
-set -o pipefail; python scripts/ta_run.py --ticker POUL.CA --date 2026-11-09 --provider sambanova --model Meta-Llama-3.3-70B-Instruct 2>&1 | tee results/run.log
+set -o pipefail; python scripts/ta_run.py --ticker POUL.CA --date 2026-11-09 --provider cohere --model command-r-08-2024 2>&1 | tee results/run.log
 ```
 
 Ticker, date, provider and model are script arguments, so the same repo
