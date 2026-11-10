@@ -10,26 +10,45 @@ one-repo-per-tool runner pattern used by the other Moos Labs tool repos.
   (`workflow_dispatch`). It installs `requirements.txt`, then executes
   whatever shell commands are stored in the **COMMANDS** repository
   variable, and uploads everything under `results/` as a build artifact.
-- The "Run commands" step receives the repository secret
-  **GOOGLE_API_KEY** as an environment variable, so normal (LLM) runs can
-  use it without the key ever appearing in a command or a log.
+- The "Run commands" step receives these organization secrets as
+  environment variables, so normal (LLM) runs can use them without a key
+  ever appearing in a command or a log: **GOOGLE_API_KEY**,
+  **SAMBANOVA_API_KEY** and **GH_MODELS_TOKEN**.
+
+## Providers
+
+`scripts/ta_run.py --provider` accepts:
+
+| Provider | Key env | Route |
+| --- | --- | --- |
+| `google` | GOOGLE_API_KEY | TradingAgents native Google client |
+| `openai` | OPENAI_API_KEY | TradingAgents native OpenAI client |
+| `anthropic` | ANTHROPIC_API_KEY | TradingAgents native Anthropic client |
+| `sambanova` | SAMBANOVA_API_KEY | Generic `openai_compatible` client, backend `https://api.sambanova.ai/v1` |
+| `github-models` | GH_MODELS_TOKEN | Generic `openai_compatible` client, backend `https://models.github.ai/inference` |
+
+Note: the stored GOOGLE_API_KEY's project is denied the Gemini free tier
+(403 in the first real run), so real runs currently use `sambanova` or
+`github-models`. For those two, the script also writes
+`results/provider_models.json` listing the models the endpoint serves.
 
 ## Commands
 
-Smoke test (no LLM calls, no key needed) - this is the current COMMANDS value:
+Smoke test (no LLM calls, no key needed):
 
 ```sh
 mkdir -p results
 python scripts/ta_run.py --smoke 2>&1 | tee results/run.log
 ```
 
-Real research run (once the GOOGLE_API_KEY secret exists):
+Real research run:
 
 ```sh
 mkdir -p results
-python scripts/ta_run.py --ticker NVDA --date 2026-11-10 --provider google --model gemini-2.5-flash 2>&1 | tee results/run.log
+set -o pipefail; python scripts/ta_run.py --ticker POUL.CA --date 2026-11-09 --provider sambanova --model Meta-Llama-3.3-70B-Instruct 2>&1 | tee results/run.log
 ```
 
 Ticker, date, provider and model are script arguments, so the same repo
 serves any market. Outputs land in `results/`: `decision.txt`,
-`final_state.json` and `report.md` (plus `smoke.json` for smoke runs).
+`final_state.json` and `report.md` (plus `smoke.json` for smoke runs and
+`provider_models.json` for the OpenAI-compatible providers).
