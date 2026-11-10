@@ -8,10 +8,18 @@ Smoke mode (--smoke) imports the package, prints its version and confirms
 the TradingAgentsGraph class imports cleanly. It makes NO LLM calls and
 needs NO API key.
 
-Normal mode reads the provider API key from the environment
-(GOOGLE_API_KEY for the default google provider), runs the multi-agent
-graph for the ticker/date and saves the decision plus report sections
-under results/.
+Normal mode reads the provider API key from the environment, runs the
+multi-agent graph for the ticker/date and saves the decision plus report
+sections under results/.
+
+Providers:
+  google        GOOGLE_API_KEY      (native Google client)
+  openai        OPENAI_API_KEY      (native OpenAI client)
+  anthropic     ANTHROPIC_API_KEY   (native Anthropic client)
+  sambanova     SAMBANOVA_API_KEY   (TradingAgents "openai_compatible"
+                                     client pointed at api.sambanova.ai/v1)
+  github-models GH_MODELS_TOKEN     (same generic client pointed at
+                                     models.github.ai/inference)
 """
 import argparse
 import json
@@ -22,6 +30,22 @@ from pathlib import Path
 
 RESULTS = Path("results")
 
+# Providers routed through TradingAgents v0.7.1's generic
+# "openai_compatible" client: the framework points it at the config's
+# backend_url and reads the key from OPENAI_COMPATIBLE_API_KEY, so the
+# provider's own key env is copied into that name in-process (never
+# printed, never logged).
+COMPAT_PROVIDERS = {
+    "sambanova": {
+        "backend_url": "https://api.sambanova.ai/v1",
+        "key_env": "SAMBANOVA_API_KEY",
+    },
+    "github-models": {
+        "backend_url": "https://models.github.ai/inference",
+        "key_env": "GH_MODELS_TOKEN",
+    },
+}
+
 
 def parse_args(argv=None):
     p = argparse.ArgumentParser(description="TradingAgents runner")
@@ -30,7 +54,8 @@ def parse_args(argv=None):
     p.add_argument("--date", default=None,
                    help="Analysis date YYYY-MM-DD (default: today, UTC)")
     p.add_argument("--provider", default="google",
-                   help="LLM provider (default: google)")
+                   help="LLM provider: google, openai, anthropic, "
+                        "sambanova or github-models (default: google)")
     p.add_argument("--model", default="gemini-2.5-flash",
                    help="Model for both deep and quick thinking (default: gemini-2.5-flash)")
     p.add_argument("--smoke", action="store_true",
@@ -62,20 +87,64 @@ def smoke():
     return 0 if info["ok"] else 1
 
 
+def probe_models(backend_url, api_key, model):
+    """Best-effort list of the models the endpoint serves.
+
+    Saved to results/provider_models.json so the chosen model name can be
+    checked against the provider's own list. Non-fatal: any failure is
+    recorded and the run continues.
+    """
+    info = {"backend_url": backend_url, "requested_model": model}
+    try:
+        import urllib.request
+        req = urllib.request.Request(
+            backend_url.rstrip("/") + "/models",
+            headers={"Authorization": f"Bearer {api_key}"})
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            data = json.loads(resp.read().decode())
+        ids = [m.get("id") for m in data.get("data", [])
+               if isinstance(m, dict)]
+        info["models"] = ids
+        info["model_listed"] = model in ids
+    except Exception as e:  # noqa: BLE001
+        info["error"] = f"{type(e).__name__}: {e}"
+    RESULTS.mkdir(parents=True, exist_ok=True)
+    (RESULTS / "provider_models.json").write_text(json.dumps(info, indent=2))
+    print(f"Provider model probe: listed={info.get('model_listed')} "
+          f"count={len(info.get('models', []))} error={info.get('error')}")
+
+
 def run(ticker, date, provider, model):
     if not ticker:
         print("ERROR: --ticker is required in normal mode", file=sys.stderr)
         return 2
-    key_env = {
-        "google": "GOOGLE_API_KEY",
-        "openai": "OPENAI_API_KEY",
-        "anthropic": "ANTHROPIC_API_KEY",
-    }.get(provider, "GOOGLE_API_KEY")
-    if not os.environ.get(key_env):
-        print(f"ERROR: {key_env} is not set. Add it as a repository secret "
-              f"named {key_env} before running in normal mode.",
-              file=sys.stderr)
-        return 2
+    provider = provider.lower()
+    backend_url = None
+    if provider in COMPAT_PROVIDERS:
+        spec = COMPAT_PROVIDERS[provider]
+        backend_url = spec["backend_url"]
+        key = (os.environ.get(spec["key_env"])
+               or os.environ.get("OPENAI_COMPATIBLE_API_KEY"))
+        if not key:
+            print(f"ERROR: {spec['key_env']} is not set. Add it as a "
+                  f"repository secret named {spec['key_env']} before "
+                  f"running in normal mode.", file=sys.stderr)
+            return 2
+        os.environ["OPENAI_COMPATIBLE_API_KEY"] = key
+        probe_models(backend_url, key, model)
+        ta_provider = "openai_compatible"
+    else:
+        key_env = {
+            "google": "GOOGLE_API_KEY",
+            "openai": "OPENAI_API_KEY",
+            "anthropic": "ANTHROPIC_API_KEY",
+        }.get(provider, "GOOGLE_API_KEY")
+        if not os.environ.get(key_env):
+            print(f"ERROR: {key_env} is not set. Add it as a repository secret "
+                  f"named {key_env} before running in normal mode.",
+                  file=sys.stderr)
+            return 2
+        ta_provider = provider
     if not date:
         date = date_cls.today().isoformat()
 
@@ -83,7 +152,9 @@ def run(ticker, date, provider, model):
     from tradingagents.graph.trading_graph import TradingAgentsGraph
 
     config = DEFAULT_CONFIG.copy()
-    config["llm_provider"] = provider
+    config["llm_provider"] = ta_provider
+    if backend_url:
+        config["backend_url"] = backend_url
     config["deep_think_llm"] = model
     config["quick_think_llm"] = model
     # Keep free-tier runs bounded: one debate / discussion round.
@@ -117,7 +188,8 @@ def run(ticker, date, provider, model):
         ("Final trade decision", "final_trade_decision"),
     ]
     lines = [f"# TradingAgents report - {ticker} - {date}",
-             f"Provider: {provider} - Model: {model}", "",
+             f"Provider: {provider} - Model: {model}",
+             f"Endpoint: {backend_url or 'provider default'}", "",
              "## Decision", "", str(decision), ""]
     for title, key in sections:
         if isinstance(final_state, dict) and final_state.get(key):
