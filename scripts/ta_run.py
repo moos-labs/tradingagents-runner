@@ -129,6 +129,172 @@ def probe_models(backend_url, api_key, model):
           f"count={len(info.get('models', []))} error={info.get('error')}")
 
 
+# ---------------------------------------------------------------------------
+# Cohere tool-schema patch. Cohere's OpenAI-compatibility endpoint validates
+# tool schemas strictly and rejects any property without a JSON-schema
+# "type" (observed failure: 400 "property look_back_days must have a
+# type"). TradingAgents defines some tool parameters without type
+# annotations, so LangChain emits properties with no "type". Before the
+# graph runs on the cohere provider, two generic passes add the missing
+# types: (A) rebuild every TradingAgents tool's args_schema with inferred
+# field types, and (B) wrap LangChain's OpenAI tool conversion so every
+# emitted property schema carries a "type".
+# ---------------------------------------------------------------------------
+
+_INTEGER_PROPS = {"look_back_days", "lookback_days", "limit", "days",
+                  "window", "period", "top_n", "count"}
+
+
+def _infer_json_type(prop, name=None):
+    if name in _INTEGER_PROPS:
+        return "integer"
+    if isinstance(prop, dict):
+        any_of = prop.get("anyOf")
+        if isinstance(any_of, list):
+            for branch in any_of:
+                if isinstance(branch, dict):
+                    t = branch.get("type")
+                    if t and t != "null":
+                        return t
+        default = prop.get("default")
+        if isinstance(default, bool):
+            return "boolean"
+        if isinstance(default, int):
+            return "integer"
+        if isinstance(default, float):
+            return "number"
+        if isinstance(default, list):
+            return "array"
+        if isinstance(default, dict):
+            return "object"
+    return "string"
+
+
+def _fix_json_schema(node):
+    """Recursively add a JSON-schema "type" wherever one is missing."""
+    if isinstance(node, dict):
+        props = node.get("properties")
+        if isinstance(props, dict):
+            for name, prop in props.items():
+                if isinstance(prop, dict):
+                    if "type" not in prop:
+                        prop["type"] = _infer_json_type(prop, name)
+                        prop.pop("anyOf", None)
+                    _fix_json_schema(prop)
+        for key in ("items", "additionalProperties"):
+            if isinstance(node.get(key), dict):
+                _fix_json_schema(node[key])
+        for key in ("anyOf", "oneOf", "allOf"):
+            if isinstance(node.get(key), list):
+                for sub in node[key]:
+                    _fix_json_schema(sub)
+    return node
+
+
+def _wrap_openai_converter(fn):
+    def wrapped(*args, **kwargs):
+        out = fn(*args, **kwargs)
+        try:
+            if isinstance(out, dict):
+                target = out
+                if isinstance(out.get("function"), dict):
+                    target = out["function"]
+                params = target.get("parameters")
+                if isinstance(params, dict):
+                    _fix_json_schema(params)
+                    params.setdefault("type", "object")
+        except Exception:  # noqa: BLE001 - the patch must never break a run
+            pass
+        return out
+    return wrapped
+
+
+def _patch_tool_args_schemas():
+    """Rebuild each TradingAgents tool's args_schema with typed fields."""
+    import typing
+    import pydantic
+    from langchain_core.tools import BaseTool
+
+    tools = {}
+    for mod_name, mod in list(sys.modules.items()):
+        if mod is None or not mod_name.startswith("tradingagents"):
+            continue
+        try:
+            candidates = list(vars(mod).values())
+            for val in list(vars(mod).values()):
+                if isinstance(val, type):
+                    try:
+                        candidates.extend(vars(val).values())
+                    except Exception:  # noqa: BLE001
+                        pass
+        except Exception:  # noqa: BLE001
+            continue
+        for val in candidates:
+            if isinstance(val, BaseTool):
+                tools[id(val)] = val
+    patched = 0
+    for tool in tools.values():
+        schema = getattr(tool, "args_schema", None)
+        if schema is None or not hasattr(schema, "model_fields"):
+            continue
+        fields = {}
+        changed = False
+        for fname, field in schema.model_fields.items():
+            ann = field.annotation
+            if ann is None or ann is typing.Any:
+                default = field.default
+                if fname in _INTEGER_PROPS:
+                    ann = int
+                elif isinstance(default, bool):
+                    ann = bool
+                elif isinstance(default, int):
+                    ann = int
+                elif isinstance(default, float):
+                    ann = float
+                elif isinstance(default, list):
+                    ann = list
+                elif isinstance(default, dict):
+                    ann = dict
+                else:
+                    ann = str
+                changed = True
+            if field.is_required():
+                fields[fname] = (ann, ...)
+            else:
+                fields[fname] = (ann, field.default)
+        if changed:
+            try:
+                tool.args_schema = pydantic.create_model(
+                    schema.__name__, **fields)
+                patched += 1
+            except Exception:  # noqa: BLE001
+                pass
+    print(f"Cohere schema patch: rebuilt args_schema for {patched} tools "
+          f"({len(tools)} TradingAgents tools found)")
+
+
+def patch_tool_schemas_for_cohere():
+    _patch_tool_args_schemas()
+    wrapped = []
+    try:
+        import langchain_core.utils.function_calling as fc
+        for name in ("convert_to_openai_tool", "convert_to_openai_function"):
+            if hasattr(fc, name):
+                setattr(fc, name, _wrap_openai_converter(getattr(fc, name)))
+                wrapped.append(f"langchain_core.{name}")
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        import langchain_openai.chat_models.base as ob
+        for name in ("convert_to_openai_tool", "convert_to_openai_function"):
+            if hasattr(ob, name):
+                setattr(ob, name, _wrap_openai_converter(getattr(ob, name)))
+                wrapped.append(f"langchain_openai.{name}")
+    except Exception:  # noqa: BLE001
+        pass
+    print(f"Cohere schema patch: wrapped converters {wrapped}")
+
+
 def run(ticker, date, provider, model):
     if not ticker:
         print("ERROR: --ticker is required in normal mode", file=sys.stderr)
@@ -165,6 +331,9 @@ def run(ticker, date, provider, model):
 
     from tradingagents.default_config import DEFAULT_CONFIG
     from tradingagents.graph.trading_graph import TradingAgentsGraph
+
+    if provider == "cohere":
+        patch_tool_schemas_for_cohere()
 
     config = DEFAULT_CONFIG.copy()
     config["llm_provider"] = ta_provider
