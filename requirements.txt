@@ -1,2 +1,4 @@
-tradingagents
+# TauricResearch TradingAgents is not published on PyPI under this name;
+# the documented install is from the official GitHub source.
+tradingagents @ git+https://github.com/TauricResearch/TradingAgents.git
 langchain-google-genai
