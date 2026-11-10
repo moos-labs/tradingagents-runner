@@ -23,6 +23,9 @@ Providers:
   cohere        COHERE_API_KEY      (same generic client pointed at
                                      Cohere's OpenAI-compatibility endpoint
                                      api.cohere.ai/compatibility/v1)
+  huggingface   HF_TOKEN            (same generic client pointed at the
+                                     Hugging Face router
+                                     router.huggingface.co/v1)
 """
 import argparse
 import json
@@ -51,6 +54,10 @@ COMPAT_PROVIDERS = {
         "backend_url": "https://api.cohere.ai/compatibility/v1",
         "key_env": "COHERE_API_KEY",
     },
+    "huggingface": {
+        "backend_url": "https://router.huggingface.co/v1",
+        "key_env": "HF_TOKEN",
+    },
 }
 
 
@@ -62,7 +69,8 @@ def parse_args(argv=None):
                    help="Analysis date YYYY-MM-DD (default: today, UTC)")
     p.add_argument("--provider", default="google",
                    help="LLM provider: google, openai, anthropic, "
-                        "sambanova, github-models or cohere (default: google)")
+                        "sambanova, github-models, cohere or huggingface "
+                        "(default: google)")
     p.add_argument("--model", default="gemini-2.5-flash",
                    help="Model for both deep and quick thinking (default: gemini-2.5-flash)")
     p.add_argument("--smoke", action="store_true",
