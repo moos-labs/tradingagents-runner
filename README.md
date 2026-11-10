@@ -34,9 +34,14 @@ SambaNova key authenticates and its model list answers, but chat
 completions return 402 ("a payment method is required") on that account.
 GitHub Models' endpoint answers plain-text `OK` stubs instead of JSON
 (the service was measured in retirement brownout in late 2026), so it is
-unusable. Real runs therefore use `cohere`. For the OpenAI-compatible
-providers, the script also writes `results/provider_models.json` listing
-the models the endpoint serves.
+unusable. Cohere authenticates, lists `command-r-08-2024` and runs real
+completions - the graph progressed through several analysts - but its
+strict validator rejects TradingAgents' tool schema (`look_back_days`
+is sent without a JSON-schema `type`), failing the News Analyst with a
+400. Next step for a green run: patch the tool schemas for the Cohere
+route, or add a payment method to the SambaNova account. For the
+OpenAI-compatible providers, the script also writes
+`results/provider_models.json` listing the models the endpoint serves.
 
 ## Commands
 
