@@ -20,6 +20,9 @@ Providers:
                                      client pointed at api.sambanova.ai/v1)
   github-models GH_MODELS_TOKEN     (same generic client pointed at
                                      models.github.ai/inference)
+  cohere        COHERE_API_KEY      (same generic client pointed at
+                                     Cohere's OpenAI-compatibility endpoint
+                                     api.cohere.ai/compatibility/v1)
 """
 import argparse
 import json
@@ -44,6 +47,10 @@ COMPAT_PROVIDERS = {
         "backend_url": "https://models.github.ai/inference",
         "key_env": "GH_MODELS_TOKEN",
     },
+    "cohere": {
+        "backend_url": "https://api.cohere.ai/compatibility/v1",
+        "key_env": "COHERE_API_KEY",
+    },
 }
 
 
@@ -55,7 +62,7 @@ def parse_args(argv=None):
                    help="Analysis date YYYY-MM-DD (default: today, UTC)")
     p.add_argument("--provider", default="google",
                    help="LLM provider: google, openai, anthropic, "
-                        "sambanova or github-models (default: google)")
+                        "sambanova, github-models or cohere (default: google)")
     p.add_argument("--model", default="gemini-2.5-flash",
                    help="Model for both deep and quick thinking (default: gemini-2.5-flash)")
     p.add_argument("--smoke", action="store_true",
