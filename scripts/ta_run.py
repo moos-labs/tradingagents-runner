@@ -296,17 +296,24 @@ def patch_tool_schemas_for_cohere():
 
 
 def install_fleet_vendor(ticker, analysis_date):
-    """Register the fleet's own data layer as TradingAgents' FIRST news
-    and fundamentals vendor (the framework's own vendor architecture).
+    """Register the fleet's own data layer as TradingAgents' FIRST news,
+    fundamentals and price vendor (the framework's own vendor
+    architecture).
 
     Root fix: the stock vendors carry no EGX news and no usable POUL
     fundamentals, and they return empty strings *successfully* — so the
     fallback chain never engaged and the news/fundamentals analyst
-    reports came back empty while the verdict still voted. The fleet
+    reports came back empty while the verdict still voted. The price
+    leg had the mirror problem: yfinance's long .CA history mixes the
+    pre-merger price scale into the series (the market report quoted a
+    200-day SMA of 30.71 for a 10.20 stock), and yfinance cannot read
+    .CA at all in some paths (Egypt DST bug) — the fleet vendor serves
+    the chart-API series the rest of the fleet already uses. The fleet
     vendor serves what the fleet itself verified (live headlines +
-    official disclosures + EDGAR facts / the curated statements CSV);
-    when it has nothing it raises VendorUnavailableError, so the chain
-    falls through to the stock vendors exactly as designed upstream.
+    official disclosures + EDGAR facts / the curated statements CSV +
+    OHLC); when it has nothing it raises VendorUnavailableError, so the
+    chain falls through to the stock vendors exactly as designed
+    upstream.
     Returns the FleetContext (already fetched), or None if unavailable.
     """
     try:
@@ -316,11 +323,13 @@ def install_fleet_vendor(ticker, analysis_date):
         # leaves a copy in results/ for the sweep archive.
         has_news = bool(ctx.items())
         has_fund = bool(ctx.fundamentals_text())
+        has_ohlc = bool(ctx.ohlc_csv("1990-01-01", analysis_date))
         RESULTS.mkdir(parents=True, exist_ok=True)
         ctx.save(str(RESULTS))
         print(f"Fleet vendor: news_items={len(ctx.items())} "
-              f"fundamentals={'yes' if has_fund else 'no'}")
-        if not has_news and not has_fund:
+              f"fundamentals={'yes' if has_fund else 'no'} "
+              f"ohlc={'yes' if has_ohlc else 'no'}")
+        if not has_news and not has_fund and not has_ohlc:
             return None
 
         from tradingagents.dataflows import router
@@ -338,11 +347,20 @@ def install_fleet_vendor(ticker, analysis_date):
                 raise VendorUnavailableError("fleet: no fundamentals")
             return text
 
+        def fleet_get_stock_data(symbol, start_date, end_date):
+            text = ctx.ohlc_csv(start_date, end_date)
+            if not text:
+                raise VendorUnavailableError("fleet: no OHLC rows")
+            return text
+
         if has_news:
             router.VENDOR_METHODS["get_news"]["fleet"] = fleet_get_news
         if has_fund:
             router.VENDOR_METHODS["get_fundamentals"]["fleet"] = \
                 fleet_get_fundamentals
+        if has_ohlc:
+            router.VENDOR_METHODS["get_stock_data"]["fleet"] = \
+                fleet_get_stock_data
         return ctx
     except Exception as e:  # noqa: BLE001 - never break a run over context
         print(f"Fleet vendor unavailable ({type(e).__name__}: {e}); "
@@ -401,11 +419,13 @@ def run(ticker, date, provider, model):
         if k in config:
             config[k] = 1
 
-    # Fleet data first for news + fundamentals (see install_fleet_vendor).
+    # Fleet data first for news + fundamentals + prices (see
+    # install_fleet_vendor).
     if install_fleet_vendor(ticker, date) is not None:
         vendors = dict(config.get("data_vendors") or {})
         vendors["news_data"] = "fleet,yfinance"
         vendors["fundamental_data"] = "fleet,sec_edgar,yfinance"
+        vendors["core_stock_apis"] = "fleet,yfinance"
         config["data_vendors"] = vendors
 
     ta = TradingAgentsGraph(debug=True, config=config)
