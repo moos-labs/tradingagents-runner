@@ -353,6 +353,15 @@ def install_fleet_vendor(ticker, analysis_date):
                 raise VendorUnavailableError("fleet: no OHLC rows")
             return text
 
+        def fleet_get_indicators(symbol, indicator, as_of_date,
+                                 look_back_days=30):
+            text = ctx.indicator_text(indicator, as_of_date,
+                                      look_back_days)
+            if not text:
+                raise VendorUnavailableError(
+                    "fleet: indicator unavailable")
+            return text
+
         if has_news:
             router.VENDOR_METHODS["get_news"]["fleet"] = fleet_get_news
         if has_fund:
@@ -361,6 +370,8 @@ def install_fleet_vendor(ticker, analysis_date):
         if has_ohlc:
             router.VENDOR_METHODS["get_stock_data"]["fleet"] = \
                 fleet_get_stock_data
+            router.VENDOR_METHODS["get_indicators"]["fleet"] = \
+                fleet_get_indicators
         return ctx
     except Exception as e:  # noqa: BLE001 - never break a run over context
         print(f"Fleet vendor unavailable ({type(e).__name__}: {e}); "
@@ -426,6 +437,7 @@ def run(ticker, date, provider, model):
         vendors["news_data"] = "fleet,yfinance"
         vendors["fundamental_data"] = "fleet,sec_edgar,yfinance"
         vendors["core_stock_apis"] = "fleet,yfinance"
+        vendors["technical_indicators"] = "fleet,yfinance"
         config["data_vendors"] = vendors
 
     ta = TradingAgentsGraph(debug=True, config=config)
