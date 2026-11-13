@@ -30,6 +30,7 @@ Providers:
 import argparse
 import json
 import os
+import re
 import sys
 from datetime import date as date_cls
 from pathlib import Path
@@ -379,6 +380,73 @@ def install_fleet_vendor(ticker, analysis_date):
         return None
 
 
+STANDARD_INDICATORS = [
+    "close_50_sma", "close_200_sma", "close_10_ema", "macd", "macds",
+    "macdh", "rsi", "boll", "boll_ub", "boll_lb", "atr", "vwma", "mfi",
+]
+_NUM_RE = re.compile(
+    r"(?<![\w.])(\d{1,3}(?:,\d{3})+(?:\.\d+)?|\d+\.\d+|\d+)(?![\w])")
+_DANGER_CTX = ("$", "egp", "%", "price", "sma", "ema", "rsi", "macd",
+               "bollinger", "atr", "pe ratio", "p/e")
+
+
+def _numbers_in(text):
+    out = []
+    for m in _NUM_RE.finditer(text or ""):
+        try:
+            out.append((float(m.group(1).replace(",", "")),
+                        m.start(1), m.end(1)))
+        except ValueError:
+            continue
+    return out
+
+
+def _truth_buckets(corpus_texts):
+    """Every number the tools actually returned, bucketed at several
+    precisions (plus percent/fraction variants) for O(1) lookups."""
+    buckets = set()
+    for text in corpus_texts:
+        for v, _, _ in _numbers_in(text):
+            for cand in (v, v * 100, v / 100):
+                buckets.add(round(cand, 0))
+                buckets.add(round(cand, 1))
+                buckets.add(round(cand, 2))
+    return buckets
+
+
+def _supported(v, ctx_text, buckets):
+    if float(v).is_integer() and 1900 <= v <= 2100:
+        return True  # a year
+    if float(v).is_integer() and v <= 31:
+        low = ctx_text.lower()
+        if not any(w in low for w in _DANGER_CTX):
+            return True  # a count / day / small ordinal, not a figure
+    return (round(v, 0) in buckets or round(v, 1) in buckets
+            or round(v, 2) in buckets)
+
+
+def audit_prose(sections, corpus_texts):
+    """Issue #31: the analysts' prose has quoted invented figures
+    (an SMA200 of $30.63 for a 10.20 stock) while the tools returned
+    the right ones. Deterministic check: every number in the prose
+    must be traceable to a number the fleet tools actually returned
+    (at any sane rounding, or in percent/fraction form). Returns
+    {section: [{value, context}]} of UNVERIFIED figures."""
+    buckets = _truth_buckets(corpus_texts)
+    bad = {}
+    for name, text in sections.items():
+        if not text:
+            continue
+        hits = []
+        for v, s, e in _numbers_in(str(text)):
+            ctx = re.sub(r"\s+", " ", str(text)[max(0, s - 45):e + 45])
+            if not _supported(v, ctx, buckets):
+                hits.append({"value": v, "context": ctx.strip()})
+        if hits:
+            bad[name] = hits
+    return bad
+
+
 def run(ticker, date, provider, model):
     if not ticker:
         print("ERROR: --ticker is required in normal mode", file=sys.stderr)
@@ -432,7 +500,8 @@ def run(ticker, date, provider, model):
 
     # Fleet data first for news + fundamentals + prices (see
     # install_fleet_vendor).
-    if install_fleet_vendor(ticker, date) is not None:
+    ctx = install_fleet_vendor(ticker, date)
+    if ctx is not None:
         vendors = dict(config.get("data_vendors") or {})
         vendors["news_data"] = "fleet,yfinance"
         vendors["fundamental_data"] = "fleet,sec_edgar,yfinance"
@@ -472,6 +541,47 @@ def run(ticker, date, provider, model):
     for title, key in sections:
         if isinstance(final_state, dict) and final_state.get(key):
             lines += [f"## {title}", "", str(final_state[key]), ""]
+
+    # Prose discipline (issue #31): audit every figure in the reports
+    # against what the fleet tools actually returned. Unverified
+    # figures are named in the report itself — never silently trusted.
+    if ctx is not None:
+        try:
+            corpus = [ctx.news_text() or "",
+                      ctx.fundamentals_text() or "",
+                      ctx.ohlc_csv("1990-01-01", date) or ""]
+            for ind in STANDARD_INDICATORS:
+                t = ctx.indicator_text(ind, date, 30)
+                if t:
+                    corpus.append(t)
+            prose = {title: (str(final_state.get(key)) if isinstance(
+                final_state, dict) and final_state.get(key) else "")
+                for title, key in sections}
+            prose["Decision"] = str(decision)
+            bad = audit_prose(prose, corpus)
+            n_bad = sum(len(v) for v in bad.values())
+            n_all = sum(len(_numbers_in(t)) for t in prose.values())
+            (RESULTS / "prose_audit.json").write_text(json.dumps(
+                {"unverified": bad, "checked": n_all,
+                 "unverified_count": n_bad}, indent=1, ensure_ascii=False))
+            (RESULTS / "prose_audit_metrics.json").write_text(json.dumps(
+                {"prose_numbers_checked": n_all,
+                 "prose_unverified_count": n_bad}))
+            lines += ["## ⚠️ Prose audit (figures not traceable to tool "
+                      "outputs)", "",
+                      f"{n_bad} of {n_all} figures in the reports could "
+                      "not be traced to any tool output. Treat them as "
+                      "unverified — the verdict stands on the traced "
+                      "data, not on these numbers.", ""]
+            for sec, hits in bad.items():
+                lines.append(f"**{sec}:**")
+                for h in hits[:20]:
+                    lines.append(f"- {h['value']} — …{h['context']}…")
+                lines.append("")
+            print(f"Prose audit: {n_bad}/{n_all} figures unverified")
+        except Exception as e:  # noqa: BLE001 - an audit must never break a run
+            print(f"Prose audit skipped ({type(e).__name__}: {e})")
+
     (RESULTS / "report.md").write_text("\n".join(lines))
     print(f"Done. Decision: {decision}")
     return 0
