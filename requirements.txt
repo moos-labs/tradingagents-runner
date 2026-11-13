@@ -1,5 +1,7 @@
 # TauricResearch TradingAgents is not published on PyPI under this name;
 # the documented install is from the official GitHub source.
-tradingagents @ git+https://github.com/TauricResearch/TradingAgents.git
+# PINNED to v0.7.1 (2026-11-13): an unpinned default-branch install lets
+# upstream drift change the fleet's behaviour silently between sweeps.
+tradingagents @ git+https://github.com/TauricResearch/TradingAgents.git@v0.7.1
 langchain-google-genai
 requests
