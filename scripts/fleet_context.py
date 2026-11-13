@@ -356,12 +356,23 @@ class FleetContext:
                 else f"{v:.4f}".rstrip("0").rstrip(".")
 
         lines = ["Date,Open,High,Low,Close,Adj Close,Volume"]
-        for r in self._ohlc_rows:
-            if start_date <= r["date"] <= end_date:
-                lines.append(",".join([
-                    r["date"], n(r["open"]), n(r["high"]), n(r["low"]),
-                    n(r["close"]), n(r["adj"]),
-                    str(int(r["volume"])) if r["volume"] else "0"]))
+        matched = [r for r in self._ohlc_rows
+                   if start_date <= r["date"] <= end_date]
+        if not matched:
+            # The requesting analyst sometimes asks for a single
+            # non-trading day (e.g. today, an EGX Friday) — an empty
+            # result starves the whole market report. Serve the latest
+            # sessions up to end_date instead of nothing.
+            matched = [r for r in self._ohlc_rows
+                       if r["date"] <= end_date][-60:]
+            if matched:
+                print(f"fleet: OHLC window {start_date}..{end_date} empty; "
+                      f"serving latest {len(matched)} sessions instead")
+        for r in matched:
+            lines.append(",".join([
+                r["date"], n(r["open"]), n(r["high"]), n(r["low"]),
+                n(r["close"]), n(r["adj"]),
+                str(int(r["volume"])) if r["volume"] else "0"]))
         return "\n".join(lines) if len(lines) > 1 else None
 
     def indicator_text(self, indicator, as_of_date, look_back_days):
