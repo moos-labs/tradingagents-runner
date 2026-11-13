@@ -295,6 +295,61 @@ def patch_tool_schemas_for_cohere():
     print(f"Cohere schema patch: wrapped converters {wrapped}")
 
 
+def install_fleet_vendor(ticker, analysis_date):
+    """Register the fleet's own data layer as TradingAgents' FIRST news
+    and fundamentals vendor (the framework's own vendor architecture).
+
+    Root fix: the stock vendors carry no EGX news and no usable POUL
+    fundamentals, and they return empty strings *successfully* — so the
+    fallback chain never engaged and the news/fundamentals analyst
+    reports came back empty while the verdict still voted. The fleet
+    vendor serves what the fleet itself verified (live headlines +
+    official disclosures + EDGAR facts / the curated statements CSV);
+    when it has nothing it raises VendorUnavailableError, so the chain
+    falls through to the stock vendors exactly as designed upstream.
+    Returns the FleetContext (already fetched), or None if unavailable.
+    """
+    try:
+        import fleet_context
+        ctx = fleet_context.FleetContext(ticker, analysis_date)
+        # Fetch eagerly: proves availability before the graph starts and
+        # leaves a copy in results/ for the sweep archive.
+        has_news = bool(ctx.items())
+        has_fund = bool(ctx.fundamentals_text())
+        RESULTS.mkdir(parents=True, exist_ok=True)
+        ctx.save(str(RESULTS))
+        print(f"Fleet vendor: news_items={len(ctx.items())} "
+              f"fundamentals={'yes' if has_fund else 'no'}")
+        if not has_news and not has_fund:
+            return None
+
+        from tradingagents.dataflows import router
+        from tradingagents.dataflows.errors import VendorUnavailableError
+
+        def fleet_get_news(t, start_date=None, end_date=None):
+            text = ctx.news_text()
+            if not text:
+                raise VendorUnavailableError("fleet: no news items")
+            return text
+
+        def fleet_get_fundamentals(t, as_of_date=None):
+            text = ctx.fundamentals_text()
+            if not text:
+                raise VendorUnavailableError("fleet: no fundamentals")
+            return text
+
+        if has_news:
+            router.VENDOR_METHODS["get_news"]["fleet"] = fleet_get_news
+        if has_fund:
+            router.VENDOR_METHODS["get_fundamentals"]["fleet"] = \
+                fleet_get_fundamentals
+        return ctx
+    except Exception as e:  # noqa: BLE001 - never break a run over context
+        print(f"Fleet vendor unavailable ({type(e).__name__}: {e}); "
+              f"continuing with stock vendors only")
+        return None
+
+
 def run(ticker, date, provider, model):
     if not ticker:
         print("ERROR: --ticker is required in normal mode", file=sys.stderr)
@@ -345,6 +400,13 @@ def run(ticker, date, provider, model):
     for k in ("max_debate_rounds", "max_risk_discuss_rounds"):
         if k in config:
             config[k] = 1
+
+    # Fleet data first for news + fundamentals (see install_fleet_vendor).
+    if install_fleet_vendor(ticker, date) is not None:
+        vendors = dict(config.get("data_vendors") or {})
+        vendors["news_data"] = "fleet,yfinance"
+        vendors["fundamental_data"] = "fleet,sec_edgar,yfinance"
+        config["data_vendors"] = vendors
 
     ta = TradingAgentsGraph(debug=True, config=config)
     out = ta.propagate(ticker, date)
