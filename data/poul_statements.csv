@@ -1,0 +1,28 @@
+item,unit,FY2024,FY2025,H1_2026,CURRENT_NOV2026,basis_notes
+revenue,EGP m,14778,15825,8007.7,,Consolidated as reported (earnings releases; FY24/FY25 vendor figures agree; H1 from 12-Aug-2026 release)
+cogs,EGP m,,11216,6099.1,,Earnings-release definition (FY25: revenue - gross profit 4609). FY24 not stated on this basis -> blank
+gross_profit,EGP m,,4609,1908.5,,Earnings-release definition. FY24 ambiguous in sources (release-basis range ~4475-4609 vs vendor 3527 incl. depreciation) -> blank
+ebitda_adjusted,EGP m,,3098,1102.1,,Company adjusted EBITDA. FY24 only given as ~3100-3230 range (release comparatives internally inconsistent) -> blank
+operating_income_vendor,EGP m,2525,2668,,,StockAnalysis vendor definition (cost of revenues incl. depreciation). H1 release reports operating profit on its own basis (separate row)
+operating_profit,EGP m,,,942.8,,H1 2026 earnings-release definition
+net_interest_income,EGP m,,676,412.6,,FY24 not disclosed in the extracted sources -> blank
+net_profit_total,EGP m,,2890,1287.7,,Total NPAT incl. minorities. FY24 given as conflicting range 2387 (cash-flow statement) to 2420 (press) -> blank
+net_income_eps_basis,EGP m,2189,2579,,,After employees'/board appropriations (StockAnalysis/Finbox); basis of reported EPS
+net_profit_special_purpose,EGP m,2480,2932,,,Post-merger special-purpose statements (Al Mal 9 Sep 2026)
+eps_reported,EGP/share,4.57,5.38,,,On 479001600 pre-merger shares; EPS-basis profit
+gains_on_sale_of_assets,EGP m,206.8,158.3,,,Cash-flow statement adjustments
+operating_cash_flow,EGP m,,2839,,,
+capex,EGP m,,1553,,,
+free_cash_flow,EGP m,2230,1286,,,
+cash_and_investments,EGP m,,4535,4227,,Point in time: FY columns = fiscal year-end (31 Dec); H1_2026 = 30 Jun 2026
+total_debt,EGP m,,236,306,,Point in time (same convention as cash)
+total_equity,EGP m,,7340.8,8191.8,,Point in time (same convention as cash)
+total_equity_special_purpose,EGP m,,7470,,,Post-merger special-purpose equity end-2025. FY24 not disclosed -> blank
+total_assets,EGP m,,10704.8,,,Consolidated end-2025. Jun-2026 total assets not stated in sources -> blank for H1_2026
+total_liabilities,EGP m,,,2836.6,,30 Jun 2026 only
+shares_outstanding,shares,479001600,479001600,479001600,,Pre-merger count (merger completed Sep 2026; after H1 2026)
+shares_post_merger,shares,,,,1789351397,Post-merger issued shares (EGP 1 par); effective Sep 2026
+retained_earnings_bf_special_purpose,EGP m,,2090,,,Special-purpose retained earnings brought forward into the FY2025 distribution project (Al Mal 19 Oct 2026)
+distributable_pool_special_purpose,EGP m,,5022,,,Special-purpose FY2025 NPAT 2932 + retained earnings b/f 2090 = distributable pool per the EGX distribution table
+dividend_per_share,EGP/share,,,,1.90,Coupon #42; FY2025 distribution; entitlement to end of 15 Nov 2026 session; paid from 18 Nov 2026 via MCDR
+dividend_total,EGP m,,,,3399.77,Approved total EGP 3399767655 = 1.90 x 1789351397 shares (AGM 18 Oct 2026)
