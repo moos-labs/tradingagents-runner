@@ -20,7 +20,7 @@ Point-in-time discipline: items dated after the analysis date are
 dropped. Everything fetched is cached per process and can be saved to
 results/ so the sweep archive preserves exactly what the agent saw.
 """
-import json, os, re, urllib.parse
+import json, os, re, time, urllib.parse
 import xml.etree.ElementTree as ET
 from datetime import datetime, timezone
 
@@ -228,6 +228,54 @@ def fetch_edgar_facts(ticker, as_of):
         return None
 
 
+def fetch_ohlc(ticker):
+    """Full daily OHLC history from Yahoo's chart API directly — the
+    fleet's standard price route. yfinance cannot read .CA tickers at
+    all (Egypt DST bug) and its long POUL history mixes the pre-merger
+    price scale into the series; the chart API series is the one the
+    rest of the fleet (Kronos, sigma, egx cross-checks) already uses.
+    Returns a list of row dicts or None."""
+    url = ("https://query1.finance.yahoo.com/v8/finance/chart/"
+           + urllib.parse.quote(ticker))
+    for attempt in (1, 2):
+        try:
+            r = requests.get(url, params={"range": "max", "interval": "1d"},
+                             headers=UA, timeout=30)
+            r.raise_for_status()
+            res = (r.json().get("chart") or {}).get("result") or []
+            if not res:
+                return None
+            res = res[0]
+            off = int(((res.get("meta") or {}).get("gmtoffset") or 0))
+            quote = ((res.get("indicators") or {}).get("quote") or [{}])[0]
+            adj = ((res.get("indicators") or {}).get("adjclose")
+                   or [{}])[0].get("adjclose") or []
+
+            def g(key, i):
+                arr = quote.get(key) or []
+                return arr[i] if i < len(arr) else None
+
+            rows = []
+            for i, t in enumerate(res.get("timestamp") or []):
+                close = g("close", i)
+                if close is None:
+                    continue
+                rows.append({
+                    "date": datetime.fromtimestamp(
+                        t + off, timezone.utc).strftime("%Y-%m-%d"),
+                    "open": g("open", i), "high": g("high", i),
+                    "low": g("low", i), "close": close,
+                    "adj": adj[i] if i < len(adj) else close,
+                    "volume": g("volume", i),
+                })
+            return rows or None
+        except Exception:
+            if attempt == 2:
+                return None
+            time.sleep(3)
+    return None
+
+
 class FleetContext:
     """Fetch-once cache of everything the fleet knows about a ticker."""
 
@@ -238,6 +286,30 @@ class FleetContext:
         self._items = None
         self._fundamentals = None
         self._fundamentals_done = False
+        self._ohlc_rows = None
+
+    def ohlc_csv(self, start_date, end_date):
+        """OHLCV in the exact CSV shape yfinance's vendor returns, so
+        TradingAgents' market analyst reads the fleet's price series."""
+        if self._ohlc_rows is None:
+            self._ohlc_rows = fetch_ohlc(self.ticker) or []
+        if not self._ohlc_rows:
+            return None
+
+        def n(v):
+            if v is None:
+                return ""
+            return str(int(v)) if float(v) == int(v) and abs(v) >= 1000 \
+                else f"{v:.4f}".rstrip("0").rstrip(".")
+
+        lines = ["Date,Open,High,Low,Close,Adj Close,Volume"]
+        for r in self._ohlc_rows:
+            if start_date <= r["date"] <= end_date:
+                lines.append(",".join([
+                    r["date"], n(r["open"]), n(r["high"]), n(r["low"]),
+                    n(r["close"]), n(r["adj"]),
+                    str(int(r["volume"])) if r["volume"] else "0"]))
+        return "\n".join(lines) if len(lines) > 1 else None
 
     def items(self):
         if self._items is None:
