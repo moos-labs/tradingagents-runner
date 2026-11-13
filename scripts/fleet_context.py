@@ -64,6 +64,10 @@ def _pdate(s):
     return datetime.min.replace(tzinfo=timezone.utc)
 
 
+def _is_arabic(text):
+    return any("\u0600" <= ch <= "\u06FF" for ch in text or "")
+
+
 def _gnews(query, lang, country, days):
     q = f"{query} when:{days}d"
     url = ("https://news.google.com/rss/search?q=" + urllib.parse.quote(q)
@@ -121,6 +125,18 @@ def fetch_rss(ticker, days=30):
             seen.add(key)
             it["kind"] = _classify_egx(it, code) if egx else "news"
             items.append(it)
+    if egx:
+        # Arabic relevance guard: bare-code queries transliterate in
+        # Arabic Google News (POUL -> بول "Paul"), flooding the feed
+        # with unrelated people news. Arabic items must mention the
+        # company's distinctive Arabic name token or the Latin code.
+        alias_ar = (ALIASES.get(code) or {}).get("ar") or ""
+        tokens = [w for w in re.split(r"\s+", alias_ar) if len(w) >= 5]
+        if tokens:
+            items = [i for i in items
+                     if not _is_arabic(i["title"])
+                     or any(t in i["title"] for t in tokens)
+                     or code in i["title"]]
     items.sort(key=lambda i: _pdate(i["date"]), reverse=True)
     return items
 
