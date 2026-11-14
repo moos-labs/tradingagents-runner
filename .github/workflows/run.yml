@@ -2,6 +2,11 @@ name: Run analysis
 
 on:
   workflow_dispatch:
+    inputs:
+      commands:
+        description: 'Borsagator composed commands (overrides vars.COMMANDS)'
+        required: false
+        type: string
 
 jobs:
   run:
@@ -26,7 +31,7 @@ jobs:
           GH_MODELS_TOKEN: ${{ secrets.GH_MODELS_TOKEN }}
           COHERE_API_KEY: ${{ secrets.COHERE_API_KEY }}
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
-        run: ${{ vars.COMMANDS }}
+        run: ${{ inputs.commands || vars.COMMANDS }}
 
       - name: Upload results
         if: always()
